@@ -36,7 +36,7 @@ export const generateSmartSummary = async (user: User, files: PropertyFile[]) =>
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-3-flash-preview',
       contents: [{ parts: [{ text: prompt }] }],
     });
     return response.text;
@@ -52,7 +52,7 @@ export const generateSmartSummary = async (user: User, files: PropertyFile[]) =>
 export async function* streamChatResponse(message: string, role: string, contextData: any[]) {
   const ai = getAI();
   const chat = ai.chats.create({
-    model: 'gemini-3-pro-preview',
+    model: 'gemini-3-flash-preview',
     config: {
       systemInstruction: `
         You are the DIN Properties Secure Registry Assistant.
@@ -84,7 +84,9 @@ export async function* streamChatResponse(message: string, role: string, context
   try {
     const result = await chat.sendMessageStream({ message });
     for await (const chunk of result) {
-      yield chunk.text;
+      // Use cast to any to safely access the .text property of GenerateContentResponse
+      const c = chunk as any;
+      yield c.text;
     }
   } catch (error) {
     console.error("Streaming Error:", error);
