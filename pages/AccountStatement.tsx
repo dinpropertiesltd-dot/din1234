@@ -91,16 +91,22 @@ const AccountStatement: React.FC<Props> = ({ file, onBack }) => {
   }, [file.transactions]);
 
   const totals = useMemo(() => {
-    let grandRec = 0;
-    let grandReceived = 0;
-    let grandSurcharge = 0;
+    let planRec = 0;
+    let planReceived = 0;
+    let planSurcharge = 0;
+
+    let otherRec = 0;
+    let otherReceived = 0;
+    let otherSurcharge = 0;
+
     let totalOverdue = 0;
     const today = new Date();
     today.setHours(0,0,0,0);
 
+    // Calculate Payment Plan Totals
     groupedTransactions.paymentPlan.forEach(g => {
       const rec = g.receivableRow;
-      grandRec += (rec.receivable || 0);
+      planRec += (rec.receivable || 0);
       
       const totalPaidForThisInt = g.receipts.reduce((s, r) => s + (r.amount_paid || 0), 0);
       const remainingForThisInt = Math.max(0, (rec.receivable || 0) - totalPaidForThisInt);
@@ -111,15 +117,16 @@ const AccountStatement: React.FC<Props> = ({ file, onBack }) => {
       }
 
       g.receipts.forEach(r => {
-        grandReceived += (r.amount_paid || 0);
-        grandSurcharge += (r.surcharge || 0);
+        planReceived += (r.amount_paid || 0);
+        planSurcharge += (r.surcharge || 0);
       });
     });
 
+    // Calculate Other Section Totals
     groupedTransactions.other.forEach(t => {
-      grandRec += (t.receivable || 0);
-      grandReceived += (t.amount_paid || 0);
-      grandSurcharge += (t.surcharge || 0);
+      otherRec += (t.receivable || 0);
+      otherReceived += (t.amount_paid || 0);
+      otherSurcharge += (t.surcharge || 0);
 
       const dueDate = parseSAPDate(t.duedate);
       const osBal = t.balduedeb || 0;
@@ -128,12 +135,22 @@ const AccountStatement: React.FC<Props> = ({ file, onBack }) => {
       }
     });
 
+    const planBalance = Math.max(0, planRec - planReceived);
+    const grandRec = planRec + otherRec;
+    const grandReceived = planReceived + otherReceived;
+    const grandSurcharge = planSurcharge + otherSurcharge;
+    const grandBalance = Math.max(0, grandRec - grandReceived);
+
     return {
+      planRec,
+      planReceived,
+      planSurcharge,
+      planBalance,
       grandRec,
       grandReceived,
       grandSurcharge,
-      totalOverdue,
-      grandBalance: Math.max(0, grandRec - grandReceived)
+      grandBalance,
+      totalOverdue
     };
   }, [groupedTransactions]);
 
@@ -297,7 +314,6 @@ const AccountStatement: React.FC<Props> = ({ file, onBack }) => {
                 const dueDate = parseSAPDate(rec.duedate);
                 const isPassedDue = dueDate && dueDate < today;
 
-                // An installment is only highlighted if it's passed due AND not fully paid
                 const shouldHighlightGroup = isPassedDue && !isFullyPaid;
 
                 if (group.receipts.length === 0) {
@@ -372,16 +388,16 @@ const AccountStatement: React.FC<Props> = ({ file, onBack }) => {
               
               <tr className="font-bold border-y border-black">
                 <td colSpan={3} className="px-2 py-1 text-right uppercase">Total Payment Plan (PKR) :</td>
-                <td className="border-x border-black text-right pr-1">{Math.round(file.plotValue).toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
+                <td className="border-x border-black text-right pr-1">{Math.round(totals.planRec).toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
                 <td colSpan={3} className="border-r border-black"></td>
-                <td className="border-r border-black text-right pr-1">{Math.round(totals.grandReceived).toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
-                <td className="border-r border-black text-right pr-1 font-bold">{Math.round(totals.grandBalance).toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
-                <td className="text-right pr-1">{Math.round(totals.grandSurcharge).toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
+                <td className="border-r border-black text-right pr-1">{Math.round(totals.planReceived).toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
+                <td className="border-r border-black text-right pr-1 font-bold">{Math.round(totals.planBalance).toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
+                <td className="text-right pr-1">{Math.round(totals.planSurcharge).toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
               </tr>
 
               <tr className="font-bold border-b-4 border-black border-double">
                 <td colSpan={3} className="px-2 py-1 text-right uppercase">Grand Total (PKR) :</td>
-                <td className="border-x border-black text-right pr-1">{Math.round(file.plotValue).toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
+                <td className="border-x border-black text-right pr-1">{Math.round(totals.grandRec).toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
                 <td colSpan={3} className="border-r border-black"></td>
                 <td className="border-r border-black text-right pr-1">{Math.round(totals.grandReceived).toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
                 <td className="border-r border-black text-right pr-1 font-bold">{Math.round(totals.grandBalance).toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
@@ -397,7 +413,7 @@ const AccountStatement: React.FC<Props> = ({ file, onBack }) => {
             </div>
             <div className="text-right text-slate-500">
               <p>
-                07 Jan 2026 &nbsp; 11:46:41 pm
+                {new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} &nbsp; {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}
               </p>
               <p className="font-bold uppercase text-black">Printed By: manager</p>
               <p className="italic">Printed by SAP Business One</p>
