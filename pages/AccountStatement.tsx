@@ -75,7 +75,6 @@ const AccountStatement: React.FC<Props> = ({ file, onBack }) => {
       }
     });
 
-    // Sort receipts chronologically for each group
     Object.values(paymentPlanGroups).forEach(group => {
       group.receipts.sort((a, b) => {
         const dateA = parseSAPDate(a.receipt_date || '') || new Date(0);
@@ -94,45 +93,33 @@ const AccountStatement: React.FC<Props> = ({ file, onBack }) => {
     let planRec = 0;
     let planReceived = 0;
     let planSurcharge = 0;
-
     let otherRec = 0;
     let otherReceived = 0;
     let otherSurcharge = 0;
-
     let totalOverdue = 0;
     const today = new Date();
     today.setHours(0,0,0,0);
 
-    // Calculate Payment Plan Totals
     groupedTransactions.paymentPlan.forEach(g => {
       const rec = g.receivableRow;
       planRec += (rec.receivable || 0);
-      
       const totalPaidForThisInt = g.receipts.reduce((s, r) => s + (r.amount_paid || 0), 0);
       const remainingForThisInt = Math.max(0, (rec.receivable || 0) - totalPaidForThisInt);
       const dueDate = parseSAPDate(rec.duedate);
-
-      if (dueDate && dueDate < today && remainingForThisInt > 0) {
-        totalOverdue += remainingForThisInt;
-      }
-
+      if (dueDate && dueDate < today && remainingForThisInt > 0) totalOverdue += remainingForThisInt;
       g.receipts.forEach(r => {
         planReceived += (r.amount_paid || 0);
         planSurcharge += (r.surcharge || 0);
       });
     });
 
-    // Calculate Other Section Totals
     groupedTransactions.other.forEach(t => {
       otherRec += (t.receivable || 0);
       otherReceived += (t.amount_paid || 0);
       otherSurcharge += (t.surcharge || 0);
-
       const dueDate = parseSAPDate(t.duedate);
       const osBal = t.balduedeb || 0;
-      if (dueDate && dueDate < today && osBal > 0) {
-        totalOverdue += osBal;
-      }
+      if (dueDate && dueDate < today && osBal > 0) totalOverdue += osBal;
     });
 
     const planBalance = Math.max(0, planRec - planReceived);
@@ -141,30 +128,58 @@ const AccountStatement: React.FC<Props> = ({ file, onBack }) => {
     const grandSurcharge = planSurcharge + otherSurcharge;
     const grandBalance = Math.max(0, grandRec - grandReceived);
 
-    return {
-      planRec,
-      planReceived,
-      planSurcharge,
-      planBalance,
-      grandRec,
-      grandReceived,
-      grandSurcharge,
-      grandBalance,
-      totalOverdue
-    };
+    return { planRec, planReceived, planSurcharge, planBalance, grandRec, grandReceived, grandSurcharge, grandBalance, totalOverdue };
   }, [groupedTransactions]);
 
   const downloadPDF = async () => {
     if (!statementRef.current) return;
     setIsDownloading(true);
     try {
-      const canvas = await html2canvas(statementRef.current, { scale: 3, useCORS: true });
+      // html2canvas config to capture full hidden/scaled height
+      const canvas = await html2canvas(statementRef.current, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        // Ensure we capture the full scroll height even if the element is clipped in the UI
+        height: statementRef.current.scrollHeight,
+        windowHeight: statementRef.current.scrollHeight,
+        onclone: (clonedDoc) => {
+          // Find the cloned element and force it to be visible/unscaled for accurate capture
+          const el = clonedDoc.querySelector('[data-statement-container]');
+          if (el) (el as HTMLElement).style.transform = 'none';
+        }
+      });
+
+      const imgData = canvas.toDataURL('image/png', 1.0);
       const pdf = new jsPDF('p', 'mm', 'a4');
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
-      pdf.addImage(imgData, 'JPEG', 0, 0, 210, (canvas.height * 210) / canvas.width);
-      pdf.save(`Account_Statement_${file.fileNo}.pdf`);
-    } catch (e) { alert('Export failed'); }
-    finally { setIsDownloading(false); }
+      
+      const imgWidth = 210; // A4 Width in mm
+      const pageHeight = 297; // A4 Height in mm
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      // Add first page
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+
+      // Add additional pages if content overflows
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+
+      pdf.save(`DIN_Account_Statement_${file.fileNo}.pdf`);
+    } catch (e) {
+      console.error('PDF Export Error:', e);
+      alert('PDF generation failed. Please ensure the ledger is fully loaded.');
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   const Logo = () => (
@@ -190,26 +205,30 @@ const AccountStatement: React.FC<Props> = ({ file, onBack }) => {
 
   return (
     <div className="space-y-6 pb-24 overflow-x-hidden flex flex-col items-center">
-      <div className="w-[210mm] flex justify-between items-center px-4 pt-4">
+      <div className="w-full max-w-[210mm] flex justify-between items-center px-4 pt-4">
         {onBack && (
           <button onClick={onBack} className="flex items-center gap-2 p-2 text-slate-500 hover:text-slate-900 border rounded-lg transition-all">
             <ArrowLeft size={16} /> <span className="text-xs font-bold uppercase">Back</span>
           </button>
         )}
-        <button onClick={downloadPDF} disabled={isDownloading} className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 text-white rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-50">
+        <button onClick={downloadPDF} disabled={isDownloading} className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 text-white rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-50 shadow-xl active:scale-95 transition-all">
           {isDownloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
           Export Official PDF
         </button>
       </div>
 
       <div className="origin-top scale-[0.4] sm:scale-[0.6] md:scale-[0.8] lg:scale-100 min-w-[210mm]">
-        <div ref={statementRef} className="bg-white p-10 w-[210mm] min-h-[297mm] shadow-2xl border" style={{ fontFamily: 'Arial, sans-serif', fontSize: '10.5px', color: '#000' }}>
-          
+        <div 
+          ref={statementRef} 
+          data-statement-container
+          className="bg-white p-10 w-[210mm] min-h-[297mm] shadow-2xl border" 
+          style={{ fontFamily: 'Arial, sans-serif', fontSize: '10.5px', color: '#000' }}
+        >
           {/* Header */}
           <div className="flex justify-between items-start mb-6">
             <div className="flex flex-col items-start gap-1">
               <Logo />
-              <div className="font-bold text-[10px] tracking-[0.2em] font-medium pl-1 uppercase text-slate-500">FAISALABAD</div>
+              <div className="font-bold text-[10px] tracking-[0.2em] pl-1 uppercase text-slate-500">FAISALABAD</div>
             </div>
             <div className="text-center flex-1">
               <h1 className="text-[14px] font-bold">DIN Properties (Pvt.) Ltd.</h1>
@@ -221,47 +240,21 @@ const AccountStatement: React.FC<Props> = ({ file, onBack }) => {
           {/* Metadata Grid */}
           <div className="grid grid-cols-2 gap-x-20 mb-4">
             <div className="space-y-1">
-              <div className="grid grid-cols-[130px_1fr]">
-                <span className="font-bold">Reg Date:</span> <span>{file.regDate}</span>
-              </div>
-              <div className="grid grid-cols-[130px_1fr]">
-                <span className="font-bold">Currency No:</span> <span>{file.currencyNo}</span>
-              </div>
-              <div className="grid grid-cols-[130px_1fr]">
-                <span className="font-bold">Plot Size:</span> <span>{file.plotSize}</span>
-              </div>
-              <div className="grid grid-cols-[130px_1fr]">
-                <span className="font-bold">Plot Value (PKR):</span> <span>{Math.round(file.plotValue).toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
-              </div>
-              <div className="grid grid-cols-[130px_1fr]">
-                <span className="font-bold">Balance (PKR):</span> <span>{Math.round(totals.grandBalance).toLocaleString('en-US', { maximumFractionDigits: 0 })}</span>
-              </div>
-              <div className="grid grid-cols-[130px_1fr]">
-                <span className="font-bold">OverDue (PKR):</span> <span className="font-bold">{totals.totalOverdue > 0 ? Math.round(totals.totalOverdue).toLocaleString('en-US', { maximumFractionDigits: 0 }) : '-'}</span>
-              </div>
-              <div className="grid grid-cols-[130px_1fr]">
-                <span className="font-bold">Surcharge (PKR):</span> <span className="font-bold">{totals.grandSurcharge > 0 ? Math.round(totals.grandSurcharge).toLocaleString('en-US', { maximumFractionDigits: 0 }) : '-'}</span>
-              </div>
+              <div className="grid grid-cols-[130px_1fr]"><span className="font-bold">Reg Date:</span> <span>{file.regDate}</span></div>
+              <div className="grid grid-cols-[130px_1fr]"><span className="font-bold">Currency No:</span> <span>{file.currencyNo}</span></div>
+              <div className="grid grid-cols-[130px_1fr]"><span className="font-bold">Plot Size:</span> <span>{file.plotSize}</span></div>
+              <div className="grid grid-cols-[130px_1fr]"><span className="font-bold">Plot Value (PKR):</span> <span>{Math.round(file.plotValue).toLocaleString('en-US', { maximumFractionDigits: 0 })}</span></div>
+              <div className="grid grid-cols-[130px_1fr]"><span className="font-bold">Balance (PKR):</span> <span>{Math.round(totals.grandBalance).toLocaleString('en-US', { maximumFractionDigits: 0 })}</span></div>
+              <div className="grid grid-cols-[130px_1fr]"><span className="font-bold">OverDue (PKR):</span> <span className="font-bold">{totals.totalOverdue > 0 ? Math.round(totals.totalOverdue).toLocaleString('en-US', { maximumFractionDigits: 0 }) : '-'}</span></div>
+              <div className="grid grid-cols-[130px_1fr]"><span className="font-bold">Surcharge (PKR):</span> <span className="font-bold">{totals.grandSurcharge > 0 ? Math.round(totals.grandSurcharge).toLocaleString('en-US', { maximumFractionDigits: 0 }) : '-'}</span></div>
             </div>
             <div className="space-y-1">
-              <div className="grid grid-cols-[100px_1fr]">
-                <span className="font-bold">File No:</span> <span className="font-bold">{file.fileNo}</span>
-              </div>
-              <div className="grid grid-cols-[100px_1fr]">
-                <span className="font-bold">Owner CNIC:</span> <span>{file.ownerCNIC}</span>
-              </div>
-              <div className="grid grid-cols-[100px_1fr]">
-                <span className="font-bold">Owner Name:</span> <span className="uppercase">{file.ownerName}</span>
-              </div>
-              <div className="grid grid-cols-[100px_1fr]">
-                <span className="font-bold">S/O, D/O, W/O:</span> <span className="uppercase">{file.fatherName}</span>
-              </div>
-              <div className="grid grid-cols-[100px_1fr]">
-                <span className="font-bold">Cell No:</span> <span>{file.cellNo}</span>
-              </div>
-              <div className="grid grid-cols-[100px_1fr]">
-                <span className="font-bold">Address:</span> <span className="leading-[1.1] uppercase">{file.address}</span>
-              </div>
+              <div className="grid grid-cols-[100px_1fr]"><span className="font-bold">File No:</span> <span className="font-bold">{file.fileNo}</span></div>
+              <div className="grid grid-cols-[100px_1fr]"><span className="font-bold">Owner CNIC:</span> <span>{file.ownerCNIC}</span></div>
+              <div className="grid grid-cols-[100px_1fr]"><span className="font-bold">Owner Name:</span> <span className="uppercase">{file.ownerName}</span></div>
+              <div className="grid grid-cols-[100px_1fr]"><span className="font-bold">S/O, D/O, W/O:</span> <span className="uppercase">{file.fatherName}</span></div>
+              <div className="grid grid-cols-[100px_1fr]"><span className="font-bold">Cell No:</span> <span>{file.cellNo}</span></div>
+              <div className="grid grid-cols-[100px_1fr]"><span className="font-bold">Address:</span> <span className="leading-[1.1] uppercase">{file.address}</span></div>
             </div>
           </div>
 
@@ -299,22 +292,16 @@ const AccountStatement: React.FC<Props> = ({ file, onBack }) => {
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td colSpan={10} className="px-1 font-bold italic underline py-1 uppercase">Payment Plan</td>
-              </tr>
+              <tr><td colSpan={10} className="px-1 font-bold italic underline py-1 uppercase">Payment Plan</td></tr>
               {groupedTransactions.paymentPlan.map((group, groupIdx) => {
                 const rec = group.receivableRow;
                 const recVal = rec.receivable || 0;
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-                
+                const today = new Date(); today.setHours(0, 0, 0, 0);
                 let cumulativePaid = 0;
                 const totalPaidForThisInt = group.receipts.reduce((s, r) => s + (r.amount_paid || 0), 0);
                 const isFullyPaid = totalPaidForThisInt >= recVal;
                 const dueDate = parseSAPDate(rec.duedate);
-                const isPassedDue = dueDate && dueDate < today;
-
-                const shouldHighlightGroup = isPassedDue && !isFullyPaid;
+                const shouldHighlightGroup = (dueDate && dueDate < today && !isFullyPaid);
 
                 if (group.receipts.length === 0) {
                   return (
@@ -338,19 +325,16 @@ const AccountStatement: React.FC<Props> = ({ file, onBack }) => {
                   const installmentBalance = Math.max(0, recVal - cumulativePaid);
                   const isInstallmentClearedNow = cumulativePaid >= recVal;
                   const isLastReceiptOfInstallment = rIdx === group.receipts.length - 1;
-                  
                   return (
                     <tr key={`${groupIdx}-${rIdx}`} className={`border-b border-gray-200 ${shouldHighlightGroup ? 'bg-[#ffff00]' : ''}`}>
                       <td className="border-x border-gray-200 text-center py-1">{rIdx === 0 ? rec.duedate : ''}</td>
                       <td className="border-r border-gray-200 text-center py-1">{rIdx === 0 ? rec.u_intno : ''}</td>
                       <td className="border-r border-gray-200 pl-2 uppercase">{rIdx === 0 ? rec.u_intname : ''}</td>
                       <td className="border-r border-gray-200 text-right pr-1">{rIdx === 0 ? format(recVal) : ''}</td>
-                      
                       <td className="border-r border-gray-200 text-center">{receipt.receipt_date || ''}</td>
                       <td className="border-r border-gray-200 pl-2">{receipt.mode || ''}</td>
                       <td className="border-r border-gray-200 text-center">{receipt.instrument_no || ''}</td>
                       <td className="border-r border-gray-200 text-right pr-1">{format(receipt.amount_paid)}</td>
-                      
                       <td className="border-r border-gray-200 text-right pr-1 font-medium">
                         {isLastReceiptOfInstallment && !isInstallmentClearedNow ? format(installmentBalance) : '-'}
                       </td>
@@ -360,16 +344,12 @@ const AccountStatement: React.FC<Props> = ({ file, onBack }) => {
                 });
               })}
 
-              <tr>
-                <td colSpan={10} className="px-1 font-bold italic underline py-1 uppercase">Other</td>
-              </tr>
+              <tr><td colSpan={10} className="px-1 font-bold italic underline py-1 uppercase">Other</td></tr>
               {groupedTransactions.other.map((t, idx) => {
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
+                const today = new Date(); today.setHours(0, 0, 0, 0);
                 const dueDate = parseSAPDate(t.duedate);
                 const osBal = t.balduedeb || 0;
                 const highlight = dueDate && dueDate < today && osBal > 0;
-                
                 return (
                   <tr key={`other-${idx}`} className={`border-b border-gray-200 ${highlight ? 'bg-[#ffff00]' : ''}`}>
                     <td className="border-x border-gray-200 text-center py-1">{t.duedate}</td>
@@ -408,13 +388,9 @@ const AccountStatement: React.FC<Props> = ({ file, onBack }) => {
 
           {/* Footer Metadata */}
           <div className="mt-auto pt-20 flex justify-between items-end text-[9px]">
-            <div className="text-slate-500">
-              <p>Page 1 of 1</p>
-            </div>
+            <div className="text-slate-500"><p>Page 1 of 1</p></div>
             <div className="text-right text-slate-500">
-              <p>
-                {new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} &nbsp; {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}
-              </p>
+              <p>{new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} &nbsp; {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}</p>
               <p className="font-bold uppercase text-black">Printed By: manager</p>
               <p className="italic">Printed by SAP Business One</p>
             </div>
