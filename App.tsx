@@ -18,7 +18,8 @@ import {
   PieChart,
   ArrowUpRight,
   TrendingUp,
-  FileText
+  FileText,
+  User as UserIcon
 } from 'lucide-react';
 
 // Components
@@ -32,6 +33,7 @@ import SOPs from './pages/SOPs';
 import AdminPortal from './pages/AdminPortal';
 import PropertyPortal from './pages/PropertyPortal';
 import AIChatAssistant from './pages/AIChatAssistant';
+import Profile from './pages/Profile';
 
 // --- Robust Persistent Storage Layer (IndexedDB) ---
 const DB_NAME = 'DIN_PORTAL_STORAGE';
@@ -172,6 +174,15 @@ const App: React.FC = () => {
   }, []);
 
   const handleUpdateUsers = (u: User[]) => { setUsers(u); syncToCloud('users', u); };
+  
+  const handleProfileUpdate = (updatedUser: User) => {
+    const updatedUsers = users.map(u => u.id === updatedUser.id ? updatedUser : u);
+    setUsers(updatedUsers);
+    setUser(updatedUser);
+    sessionStorage.setItem('DIN_SESSION_USER', JSON.stringify(updatedUser));
+    syncToCloud('users', updatedUsers);
+  };
+
   const handleUpdateFiles = (f: PropertyFile[]) => { setAllFiles(f); syncToCloud('files', f); };
   const handleUpdateNotices = (n: Notice[]) => { setNotices(n); syncToCloud('notices', n); };
   const handleUpdateMessages = (updater: Message[] | ((prev: Message[]) => Message[])) => {
@@ -301,6 +312,7 @@ const App: React.FC = () => {
     { id: 'alerts', label: 'News', icon: Bell },
     { id: 'inbox', label: 'Messages', icon: Mail, badge: unreadCount },
     { id: 'sops', label: 'SOPs', icon: FileCheck },
+    { id: 'profile', label: 'Profile', icon: UserIcon },
     { id: 'admin', label: 'Admin', icon: Settings, hidden: user.role !== 'ADMIN' },
   ].filter(i => !i.hidden);
 
@@ -313,6 +325,7 @@ const App: React.FC = () => {
       case 'alerts': return <NewsAlerts />;
       case 'inbox': return <Inbox messages={visibleMessages} setMessages={handleUpdateMessages} currentUser={user} onSendMessage={(m) => { setMessages([m, ...messages]); syncToCloud('messages', [m, ...messages]); }} users={users} initialPartnerId={initialChatPartnerId} />;
       case 'sops': return <SOPs />;
+      case 'profile': return <Profile user={user} onUpdate={handleProfileUpdate} />;
       case 'admin': return <AdminPortal users={users} setUsers={handleUpdateUsers} notices={notices} setNotices={setNotices} allFiles={allFiles} setAllFiles={handleUpdateFiles} messages={messages} onSendMessage={(m) => { setMessages([m, ...messages]); syncToCloud('messages', [m, ...messages]); }} onImportFullDatabase={handleMassImport} onResetDatabase={handleResetDatabase} onSwitchToChat={(id) => { setInitialChatPartnerId(id); setCurrentPage('inbox'); }} onPreviewStatement={setSelectedFile} />;
       default: return <Dashboard onSelectFile={setSelectedFile} files={userFiles} userName={user.name} />;
     }
