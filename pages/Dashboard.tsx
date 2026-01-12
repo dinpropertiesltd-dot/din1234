@@ -1,6 +1,6 @@
 
 import React, { useMemo, useState, useEffect } from 'react';
-import { PropertyFile, Transaction, User } from '../types';
+import { PropertyFile, Transaction } from '../types';
 import { generateSmartSummary } from '../AIService';
 import { 
   CreditCard, 
@@ -10,6 +10,7 @@ import {
   AlertOctagon, 
   Layers,
   ChevronRight,
+  ChevronLeft,
   TrendingUp,
   FileSpreadsheet,
   Calendar,
@@ -17,7 +18,9 @@ import {
   ArrowRightCircle,
   ShieldCheck,
   Sparkles,
-  Loader2
+  Loader2,
+  AlertCircle,
+  TriangleAlert
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -29,8 +32,30 @@ interface DashboardProps {
 const Dashboard: React.FC<DashboardProps> = ({ onSelectFile, files, userName }) => {
   const [aiSummary, setAiSummary] = useState<string>('');
   const [isAiLoading, setIsAiLoading] = useState<boolean>(true);
+  const [alertIndex, setAlertIndex] = useState(0);
 
-  // Re-fetch AI summary when files change
+  const parseSAPDate = (dateStr: string) => {
+    if (!dateStr || dateStr === '-' || dateStr === '' || dateStr === 'NULL') return null;
+    try {
+      const parts = dateStr.split('-');
+      if (parts.length !== 3) return null;
+      const day = parseInt(parts[0]);
+      const monthStr = parts[1];
+      let year = parseInt(parts[2]);
+      if (year < 100) year += 2000;
+      
+      const months: Record<string, number> = {
+        'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+        'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+      };
+      const normalizedMonth = monthStr.charAt(0).toUpperCase() + monthStr.slice(1).toLowerCase();
+      const month = months[normalizedMonth.substring(0, 3)];
+      if (month === undefined) return null;
+      
+      return new Date(year, month, day);
+    } catch (e) { return null; }
+  };
+
   useEffect(() => {
     const fetchSummary = async () => {
       if (files.length === 0) {
@@ -39,7 +64,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectFile, files, userName }) 
         return;
       }
       setIsAiLoading(true);
-      // Construct a mock user object for the summary service
       const mockUser: any = { name: userName };
       const summary = await generateSmartSummary(mockUser, files);
       setAiSummary(summary || '');
@@ -48,36 +72,60 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectFile, files, userName }) 
     fetchSummary();
   }, [files, userName]);
 
-  const findGlobalNextPayment = () => {
-    let next: { trans: Transaction, plotName: string, itemCode: string } | null = null;
+  const allAlerts = useMemo(() => {
+    const alerts: { trans: Transaction, plotName: string, itemCode: string, file: PropertyFile, isOverdue: boolean }[] = [];
+    const today = new Date();
+    today.setHours(0,0,0,0);
+
     files.forEach(file => {
-      const unpaid = file.transactions.find(t => (!t.amount_paid || t.amount_paid === 0) && (t.receivable && t.receivable > 0));
-      if (unpaid && !next) {
-        next = { trans: unpaid, plotName: file.plotSize, itemCode: file.fileNo };
+      // Identify all truly overdue installments (past date + remaining balance)
+      const overdueTrans = file.transactions
+        .filter(t => {
+          const d = parseSAPDate(t.duedate);
+          return d && d < today && (t.balduedeb || 0) > 0;
+        })
+        .sort((a, b) => {
+          const da = parseSAPDate(a.duedate);
+          const db = parseSAPDate(b.duedate);
+          return (da?.getTime() || 0) - (db?.getTime() || 0);
+        })[0]; // Take the oldest overdue per file
+
+      if (overdueTrans) {
+        alerts.push({ trans: overdueTrans, plotName: file.plotSize, itemCode: file.fileNo, file, isOverdue: true });
+      } else {
+        // If nothing is overdue, find the next upcoming commitment
+        const nextCommitment = file.transactions.find(t => {
+           const d = parseSAPDate(t.duedate);
+           return d && d >= today && (!t.amount_paid || t.amount_paid === 0) && (t.receivable && t.receivable > 0);
+        });
+        if (nextCommitment) {
+           alerts.push({ trans: nextCommitment, plotName: file.plotSize, itemCode: file.fileNo, file, isOverdue: false });
+        }
       }
     });
-    return next;
-  };
 
-  const getFileNextPayment = (file: PropertyFile) => {
-    return file.transactions.find(t => (!t.amount_paid || t.amount_paid === 0) && (t.receivable && t.receivable > 0));
-  };
+    // Prioritize overdue alerts at the top of the cycle
+    return alerts.sort((a, b) => (a.isOverdue === b.isOverdue ? 0 : a.isOverdue ? -1 : 1));
+  }, [files]);
+
+  const currentAlert = allAlerts[alertIndex];
 
   const getFileStatus = (file: PropertyFile) => {
+    const today = new Date();
+    today.setHours(0,0,0,0);
     const hasOverdue = file.transactions.some(t => {
-      return t.balduedeb && t.balduedeb > 0;
+      const d = parseSAPDate(t.duedate);
+      return d && d < today && (t.balduedeb || 0) > 0;
     });
 
-    if (hasOverdue) return { label: 'Action Required', color: 'bg-amber-50 text-amber-600 border-amber-100' };
+    if (hasOverdue) return { label: 'Action Required', color: 'bg-rose-50 text-rose-600 border-rose-100' };
     if (file.balance > 0) return { label: 'Active Ledger', color: 'bg-blue-50 text-blue-600 border-blue-100' };
     return { label: 'Clearance Verified', color: 'bg-emerald-50 text-emerald-600 border-emerald-100' };
   };
 
-  const globalNextPayment = findGlobalNextPayment();
-
   const stats = useMemo(() => {
     const activeRecordsCount = files.filter(f => f.balance > 0).length;
-    const alertCount = files.filter(f => f.overdue > 0 || f.transactions.some(t => (t.balduedeb || 0) > 0)).length;
+    const overdueCount = allAlerts.filter(a => a.isOverdue).length;
     const transferCount = files.reduce((acc, f) => acc + f.transactions.filter(t => (t.u_intname || '').toUpperCase() === 'TRANSFER').length, 0);
 
     return [
@@ -85,10 +133,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectFile, files, userName }) 
       { label: 'Active Records', value: activeRecordsCount.toString().padStart(2, '0'), icon: CreditCard, color: 'bg-emerald-600' },
       { label: 'Joint Members', value: '00', icon: Users, color: 'bg-amber-600' }, 
       { label: 'Transfers', value: transferCount.toString().padStart(2, '0'), icon: RefreshCcw, color: 'bg-purple-600' },
-      { label: 'Alerts', value: alertCount.toString().padStart(2, '0'), icon: AlertOctagon, color: 'bg-rose-600' },
+      { label: 'Alerts', value: overdueCount.toString().padStart(2, '0'), icon: AlertOctagon, color: 'bg-rose-600' },
       { label: 'Integrations', value: 'SAP', icon: Layers, color: 'bg-slate-600' },
     ];
-  }, [files]);
+  }, [files, allAlerts]);
 
   const formatCurrency = (val: number) => {
     return new Intl.NumberFormat('en-PK', { style: 'currency', currency: 'PKR', maximumFractionDigits: 0 }).format(val);
@@ -122,35 +170,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectFile, files, userName }) 
         </div>
       </div>
 
-      {/* AI Smart Summary Panel */}
-      <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden group">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full blur-[80px] pointer-events-none"></div>
-        <div className="relative z-10 flex flex-col md:flex-row items-center gap-8">
-          <div className="w-16 h-16 bg-emerald-600 rounded-3xl flex items-center justify-center text-white shrink-0 shadow-lg shadow-emerald-600/30">
-            {isAiLoading ? <Loader2 size={32} className="animate-spin" /> : <Sparkles size={32} />}
-          </div>
-          <div className="flex-1">
-            <h3 className="text-emerald-500 text-[10px] font-black uppercase tracking-[0.4em] mb-2">AI Registry Intelligence</h3>
-            <div className="text-white text-sm sm:text-base font-medium leading-relaxed">
-              {isAiLoading ? (
-                <div className="flex gap-2 items-center">
-                  <div className="w-2 h-2 bg-emerald-500 rounded-full animate-bounce"></div>
-                  <div className="w-2 h-2 bg-emerald-500 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                  <div className="w-2 h-2 bg-emerald-500 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                  <span className="text-slate-500 ml-2 italic">Scanning secure ledger nodes...</span>
-                </div>
-              ) : (
-                <p className="animate-in fade-in slide-in-from-left-4 duration-500">{aiSummary}</p>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
         {stats.map((stat, i) => (
-          <div key={i} className="bg-white p-5 sm:p-6 rounded-[2rem] sm:rounded-[2.5rem] shadow-sm border border-slate-100 hover:shadow-2xl hover:-translate-y-1 transition-all group cursor-pointer">
-            <div className={`w-10 h-10 sm:w-12 sm:h-12 ${stat.color} rounded-2xl flex items-center justify-center text-white mb-3 sm:mb-4 shadow-lg shadow-current/20 group-hover:scale-110 transition-transform`}>
+          <div key={i} className="bg-white p-5 sm:p-6 rounded-[2rem] shadow-sm border border-slate-100 hover:shadow-2xl hover:-translate-y-1 transition-all group cursor-pointer">
+            <div className={`w-10 h-10 ${stat.color} rounded-2xl flex items-center justify-center text-white mb-3 shadow-lg shadow-current/20 group-hover:scale-110 transition-transform`}>
               <stat.icon size={20} />
             </div>
             <p className="text-slate-400 text-[8px] sm:text-[9px] font-black uppercase tracking-[0.2em]">{stat.label}</p>
@@ -175,7 +198,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectFile, files, userName }) 
             </button>
           </div>
           
-          <div className="bg-white rounded-[2rem] sm:rounded-[3rem] shadow-2xl shadow-slate-200/40 border border-slate-200 overflow-hidden">
+          <div className="bg-white rounded-[3rem] shadow-2xl shadow-slate-200/40 border border-slate-200 overflow-hidden">
             <div className="hidden lg:block overflow-x-auto custom-scrollbar">
               <table className="w-full text-left border-collapse min-w-[800px]">
                 <thead>
@@ -190,7 +213,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectFile, files, userName }) 
                 <tbody className="divide-y divide-slate-100">
                   {files.map((file) => {
                     const status = getFileStatus(file);
-                    const next = getFileNextPayment(file);
+                    const today = new Date();
+                    today.setHours(0,0,0,0);
+                    
+                    const overdue = file.transactions.find(t => {
+                      const d = parseSAPDate(t.duedate);
+                      return d && d < today && (t.balduedeb || 0) > 0;
+                    });
+
+                    const next = overdue || file.transactions.find(t => (!t.amount_paid || t.amount_paid === 0) && (t.receivable && t.receivable > 0));
                     const recoveryPercent = file.plotValue > 0 ? Math.round((file.paymentReceived / file.plotValue) * 100) : 0;
                     
                     return (
@@ -204,9 +235,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectFile, files, userName }) 
                         <td className="px-10 py-8">
                           {next ? (
                             <div>
-                              <div className="text-xs font-black text-slate-900">{formatCurrency(next.receivable || 0)}</div>
-                              <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tight mt-0.5 flex items-center gap-1">
-                                <Clock size={10} /> {next.duedate}
+                              <div className={`text-xs font-black ${overdue ? 'text-rose-600' : 'text-slate-900'}`}>{formatCurrency(overdue ? (overdue.balduedeb || 0) : (next.receivable || 0))}</div>
+                              <div className={`text-[9px] font-bold uppercase tracking-tight mt-0.5 flex items-center gap-1 ${overdue ? 'text-rose-400' : 'text-slate-400'}`}>
+                                {overdue ? <TriangleAlert size={10} /> : <Clock size={10} />}
+                                {next.duedate}
                               </div>
                             </div>
                           ) : (
@@ -220,7 +252,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectFile, files, userName }) 
                             <span className="text-[10px] font-black text-slate-900">{formatCurrency(file.paymentReceived)}</span>
                             <span className="text-[9px] font-black text-slate-400">{recoveryPercent}% Secured</span>
                           </div>
-                          <div className="w-32 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div className="w-40 h-1.5 bg-slate-100 rounded-full overflow-hidden">
                             <div 
                               className={`h-full rounded-full transition-all duration-1000 ${recoveryPercent > 70 ? 'bg-emerald-500' : 'bg-blue-600'}`} 
                               style={{ width: `${recoveryPercent}%` }}
@@ -250,7 +282,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectFile, files, userName }) 
             <div className="lg:hidden p-4 sm:p-6 space-y-4">
               {files.map((file) => {
                 const status = getFileStatus(file);
-                const next = getFileNextPayment(file);
+                const today = new Date();
+                today.setHours(0,0,0,0);
+                const overdue = file.transactions.find(t => {
+                   const d = parseSAPDate(t.duedate);
+                   return d && d < today && (t.balduedeb || 0) > 0;
+                });
+                const next = overdue || file.transactions.find(t => (!t.amount_paid || t.amount_paid === 0) && (t.receivable && t.receivable > 0));
                 const recoveryPercent = file.plotValue > 0 ? Math.round((file.paymentReceived / file.plotValue) * 100) : 0;
 
                 return (
@@ -267,8 +305,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectFile, files, userName }) 
 
                     <div className="grid grid-cols-2 gap-6 mb-6">
                       <div>
-                        <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Target Inbound</p>
-                        <p className="text-xs font-black text-slate-900 mt-1">{next ? formatCurrency(next.receivable || 0) : 'Registry Clear'}</p>
+                        <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">{overdue ? 'Overdue Balance' : 'Target Inbound'}</p>
+                        <p className={`text-xs font-black mt-1 ${overdue ? 'text-rose-600' : 'text-slate-900'}`}>{next ? formatCurrency(overdue ? (overdue.balduedeb || 0) : (next.receivable || 0)) : 'Registry Clear'}</p>
                       </div>
                       <div>
                         <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Secured Ratio</p>
@@ -286,68 +324,127 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectFile, files, userName }) 
                 );
               })}
             </div>
-
-            {files.length === 0 && (
-              <div className="px-10 py-24 text-center">
-                <div className="flex flex-col items-center opacity-30">
-                  <AlertOctagon size={48} className="text-slate-300 mb-4" />
-                  <p className="text-[11px] font-black uppercase tracking-widest text-slate-500">No Asset Records Identified in Secure Registry</p>
+          </div>
+          
+          <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden group">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full blur-[80px] pointer-events-none"></div>
+            <div className="relative z-10 flex flex-col md:flex-row items-center gap-8">
+              <div className="w-16 h-16 bg-emerald-600 rounded-3xl flex items-center justify-center text-white shrink-0 shadow-lg shadow-emerald-600/30">
+                {isAiLoading ? <Loader2 size={32} className="animate-spin" /> : <Sparkles size={32} />}
+              </div>
+              <div className="flex-1">
+                <h3 className="text-emerald-500 text-[10px] font-black uppercase tracking-[0.4em] mb-2">AI Registry Intelligence</h3>
+                <div className="text-white text-sm sm:text-base font-medium leading-relaxed">
+                  {isAiLoading ? (
+                    <div className="flex gap-2 items-center">
+                      <div className="w-2 h-2 bg-emerald-500 rounded-full animate-bounce"></div>
+                      <div className="w-2 h-2 bg-emerald-500 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                      <div className="w-2 h-2 bg-emerald-500 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                      <span className="text-slate-500 ml-2 italic">Scanning secure ledger nodes...</span>
+                    </div>
+                  ) : (
+                    <p className="animate-in fade-in slide-in-from-left-4 duration-500">{aiSummary}</p>
+                  )}
                 </div>
               </div>
-            )}
+            </div>
           </div>
         </div>
 
         <div className="xl:col-span-4 space-y-6">
-          <div className="bg-slate-900 rounded-[2rem] sm:rounded-[3.5rem] p-8 sm:p-10 text-white relative overflow-hidden shadow-2xl flex flex-col justify-between min-h-[400px]">
-            <div className="absolute top-0 right-0 w-80 h-80 bg-emerald-500/5 rounded-full translate-x-1/2 -translate-y-1/2 blur-3xl"></div>
+          <div className={`rounded-[3.5rem] p-8 sm:p-10 text-white relative overflow-hidden shadow-2xl flex flex-col min-h-[500px] border transition-all duration-500 ${currentAlert?.isOverdue ? 'bg-[#1a0a0d] border-rose-500/20 shadow-rose-900/20' : 'bg-[#0b1424] border-white/5 shadow-slate-900/20'}`}>
+            <div className={`absolute top-0 right-0 w-80 h-80 rounded-full translate-x-1/2 -translate-y-1/2 blur-3xl ${currentAlert?.isOverdue ? 'bg-rose-500/10' : 'bg-emerald-500/5'}`}></div>
             
-            <div className="relative z-10">
-              <div className="w-16 h-16 bg-emerald-600 rounded-3xl flex items-center justify-center mb-8 shadow-2xl shadow-emerald-600/40">
-                <TrendingUp size={32} />
+            <div className="relative z-10 h-full flex flex-col">
+              <div className="flex items-center justify-between mb-8">
+                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-xl transition-all ${currentAlert?.isOverdue ? 'bg-rose-600 shadow-rose-600/20' : 'bg-[#10b981] shadow-emerald-500/20'}`}>
+                  {currentAlert?.isOverdue ? <TriangleAlert size={28} /> : <TrendingUp size={28} />}
+                </div>
+                {allAlerts.length > 1 && (
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setAlertIndex(prev => (prev > 0 ? prev - 1 : allAlerts.length - 1))}
+                      className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center hover:bg-white/10 transition-all"
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                    <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">{alertIndex + 1} / {allAlerts.length}</span>
+                    <button 
+                      onClick={() => setAlertIndex(prev => (prev < allAlerts.length - 1 ? prev + 1 : 0))}
+                      className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center hover:bg-white/10 transition-all"
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
+                )}
               </div>
               
-              <h4 className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.4em] mb-4">PORTFOLIO ALERT</h4>
+              <h4 className={`text-[10px] font-black uppercase tracking-[0.4em] mb-8 ${currentAlert?.isOverdue ? 'text-rose-500 animate-pulse' : 'text-[#10b981]'}`}>
+                {currentAlert?.isOverdue ? 'CRITICAL OVERDUE ALERT' : 'PORTFOLIO ALERT'}
+              </h4>
               
-              {globalNextPayment ? (
-                <div className="space-y-8">
-                  <div>
-                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Asset Reference</p>
-                    <p className="text-2xl font-black text-white uppercase tracking-tight leading-tight">{globalNextPayment.plotName}</p>
-                    <p className="text-[11px] text-emerald-500/80 font-bold mt-1 uppercase tracking-widest">Item Code: {globalNextPayment.itemCode}</p>
+              {currentAlert ? (
+                <div className="flex-1 flex flex-col">
+                  <div className="mb-10">
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Asset Reference</p>
+                    <p className="text-3xl font-black text-white uppercase tracking-tight leading-tight mb-1">{currentAlert.plotName}</p>
+                    <p className={`text-[11px] font-bold uppercase tracking-widest ${currentAlert.isOverdue ? 'text-rose-400' : 'text-[#10b981]'}`}>
+                      ITEM CODE: {currentAlert.itemCode}
+                    </p>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-6">
-                    <div className="bg-white/5 border border-white/10 p-6 rounded-[2.5rem]">
-                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Amount Outstanding</p>
-                      <p className="text-3xl font-black text-white">{formatCurrency(globalNextPayment.trans.receivable || 0)}</p>
+                  <div className="space-y-6 flex-1">
+                    <div className={`bg-white/5 border p-8 rounded-[2.5rem] backdrop-blur-sm transition-all ${currentAlert.isOverdue ? 'border-rose-500/30' : 'border-white/10'}`}>
+                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">
+                        {currentAlert.isOverdue ? 'Amount Overdue' : 'Amount Outstanding'}
+                      </p>
+                      <p className={`text-4xl font-black ${currentAlert.isOverdue ? 'text-rose-500' : 'text-white'}`}>
+                        {formatCurrency(currentAlert.isOverdue ? (currentAlert.trans.balduedeb || 0) : (currentAlert.trans.receivable || 0))}
+                      </p>
                     </div>
                     
-                    <div className="flex items-center gap-4 px-2">
-                      <div className="w-10 h-10 rounded-2xl bg-white/5 flex items-center justify-center text-emerald-500 border border-white/10">
-                        <Calendar size={18} />
+                    <div className={`flex items-center gap-5 px-4 py-6 bg-white/5 rounded-3xl border transition-all ${currentAlert.isOverdue ? 'border-rose-500/30' : 'border-white/10'}`}>
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center border ${currentAlert.isOverdue ? 'bg-rose-500/10 text-rose-500 border-rose-500/20' : 'bg-[#10b981]/10 text-[#10b981] border-[#10b981]/20'}`}>
+                        <Calendar size={20} />
                       </div>
                       <div>
-                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Target Date</p>
-                        <p className="text-base font-black text-white">{globalNextPayment.trans.duedate}</p>
+                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                          {currentAlert.isOverdue ? 'Date Missed' : 'Target Date'}
+                        </p>
+                        <p className={`text-lg font-black ${currentAlert.isOverdue ? 'text-rose-200' : 'text-white'}`}>
+                          {currentAlert.trans.duedate}
+                        </p>
                       </div>
                     </div>
                   </div>
 
-                  <button className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black py-6 rounded-[2rem] sm:rounded-[2.5rem] transition-all shadow-xl shadow-emerald-600/20 active:scale-[0.98] flex items-center justify-center gap-3 uppercase tracking-[0.2em] text-[11px]">
-                    Proceed To Payment
+                  <button 
+                    onClick={() => onSelectFile(currentAlert.file)}
+                    className={`w-full font-black py-6 rounded-[2.5rem] transition-all shadow-xl active:scale-[0.98] flex items-center justify-center gap-3 uppercase tracking-[0.2em] text-[11px] mt-10 ${currentAlert.isOverdue ? 'bg-rose-600 hover:bg-rose-500 shadow-rose-600/20' : 'bg-[#10b981] hover:bg-[#0ea372] shadow-[#10b981]/20'}`}
+                  >
+                    {currentAlert.isOverdue ? 'Resolve Overdue Ledger' : 'Proceed To Payment'}
                     <ChevronRight size={18} />
                   </button>
                 </div>
               ) : (
-                <div className="py-20 flex flex-col items-center text-center opacity-40">
-                  <ShieldCheck size={64} className="text-emerald-500 mb-6" />
-                  <p className="text-[11px] font-black uppercase tracking-widest text-white leading-relaxed">
+                <div className="flex-1 flex flex-col items-center justify-center text-center opacity-40">
+                  <ShieldCheck size={80} className="text-[#10b981] mb-8" />
+                  <p className="text-xs font-black uppercase tracking-[0.3em] text-white leading-relaxed">
                     Registry Synchronized<br/>Portfolio Status: Clear
                   </p>
                 </div>
               )}
             </div>
+          </div>
+          
+          <div className="bg-white rounded-[2.5rem] p-8 border border-slate-200 shadow-xl shadow-slate-200/20">
+             <div className="flex items-center gap-3 mb-6">
+                <AlertCircle size={18} className="text-amber-500" />
+                <h5 className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Security Advisory</h5>
+             </div>
+             <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                Payments are due by the 10th of every month. A 3.5% monthly surcharge applies to all late submissions. Ensure your bank instruments are verified before the target date.
+             </p>
           </div>
         </div>
       </div>
