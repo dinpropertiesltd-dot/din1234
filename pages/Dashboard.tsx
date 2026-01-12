@@ -134,7 +134,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectFile, files, userName }) 
       { label: 'Joint Members', value: '00', icon: Users, color: 'bg-amber-600' }, 
       { label: 'Transfers', value: transferCount.toString().padStart(2, '0'), icon: RefreshCcw, color: 'bg-purple-600' },
       { label: 'Alerts', value: overdueCount.toString().padStart(2, '0'), icon: AlertOctagon, color: 'bg-rose-600' },
-      { label: 'Integrations', value: 'SAP', icon: Layers, color: 'bg-slate-600' },
     ];
   }, [files, allAlerts]);
 
@@ -170,7 +169,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectFile, files, userName }) 
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
         {stats.map((stat, i) => (
           <div key={i} className="bg-white p-5 sm:p-6 rounded-[2rem] shadow-sm border border-slate-100 hover:shadow-2xl hover:-translate-y-1 transition-all group cursor-pointer">
             <div className={`w-10 h-10 ${stat.color} rounded-2xl flex items-center justify-center text-white mb-3 shadow-lg shadow-current/20 group-hover:scale-110 transition-transform`}>
@@ -206,7 +205,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectFile, files, userName }) 
                     <th className="px-10 py-6">Item Code & Classification</th>
                     <th className="px-10 py-6">Next Commitment</th>
                     <th className="px-10 py-6">Recovery Index</th>
-                    <th className="px-10 py-6">SAP Status</th>
+                    <th className="px-10 py-6">Status</th>
                     <th className="px-10 py-6 text-right">Operations</th>
                   </tr>
                 </thead>
