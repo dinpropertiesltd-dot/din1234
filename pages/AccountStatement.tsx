@@ -42,6 +42,12 @@ const AccountStatement: React.FC<Props> = ({ file, onBack }) => {
     } catch (e) { return null; }
   };
 
+  // Helper to identify if a transaction type should have its date hidden
+  const shouldHideDate = (type: string) => {
+    const t = (type || '').toUpperCase();
+    return t.includes('POSSESSION') || t.includes('BALLOT') || t.includes('PLOT');
+  };
+
   const groupedTransactions = useMemo(() => {
     const paymentPlanGroups: Record<number, { 
       receivableRow: Transaction, 
@@ -302,11 +308,12 @@ const AccountStatement: React.FC<Props> = ({ file, onBack }) => {
                 const isFullyPaid = totalPaidForThisInt >= recVal;
                 const dueDate = parseSAPDate(rec.duedate);
                 const shouldHighlightGroup = (dueDate && dueDate < today && !isFullyPaid);
+                const hideDate = shouldHideDate(rec.u_intname);
 
                 if (group.receipts.length === 0) {
                   return (
                     <tr key={groupIdx} className={`border-b border-gray-200 ${shouldHighlightGroup ? 'bg-[#ffff00]' : ''}`}>
-                      <td className="border-x border-gray-200 text-center py-1">{rec.duedate}</td>
+                      <td className="border-x border-gray-200 text-center py-1">{hideDate ? '-' : rec.duedate}</td>
                       <td className="border-r border-gray-200 text-center py-1">{rec.u_intno}</td>
                       <td className="border-r border-gray-200 pl-2 uppercase">{rec.u_intname}</td>
                       <td className="border-r border-gray-200 text-right pr-1">{format(recVal)}</td>
@@ -327,7 +334,7 @@ const AccountStatement: React.FC<Props> = ({ file, onBack }) => {
                   const isLastReceiptOfInstallment = rIdx === group.receipts.length - 1;
                   return (
                     <tr key={`${groupIdx}-${rIdx}`} className={`border-b border-gray-200 ${shouldHighlightGroup ? 'bg-[#ffff00]' : ''}`}>
-                      <td className="border-x border-gray-200 text-center py-1">{rIdx === 0 ? rec.duedate : ''}</td>
+                      <td className="border-x border-gray-200 text-center py-1">{rIdx === 0 ? (hideDate ? '-' : rec.duedate) : ''}</td>
                       <td className="border-r border-gray-200 text-center py-1">{rIdx === 0 ? rec.u_intno : ''}</td>
                       <td className="border-r border-gray-200 pl-2 uppercase">{rIdx === 0 ? rec.u_intname : ''}</td>
                       <td className="border-r border-gray-200 text-right pr-1">{rIdx === 0 ? format(recVal) : ''}</td>
@@ -350,9 +357,10 @@ const AccountStatement: React.FC<Props> = ({ file, onBack }) => {
                 const dueDate = parseSAPDate(t.duedate);
                 const osBal = t.balduedeb || 0;
                 const highlight = dueDate && dueDate < today && osBal > 0;
+                const hideDate = shouldHideDate(t.u_intname);
                 return (
                   <tr key={`other-${idx}`} className={`border-b border-gray-200 ${highlight ? 'bg-[#ffff00]' : ''}`}>
-                    <td className="border-x border-gray-200 text-center py-1">{t.duedate}</td>
+                    <td className="border-x border-gray-200 text-center py-1">{hideDate ? '-' : t.duedate}</td>
                     <td className="border-r border-gray-200 text-center py-1">-</td>
                     <td className="border-r border-gray-200 pl-2 uppercase">{t.u_intname || 'Other'}</td>
                     <td className="border-r border-gray-200 text-right pr-1">{format(t.receivable)}</td>
