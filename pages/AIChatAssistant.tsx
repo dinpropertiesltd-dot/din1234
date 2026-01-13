@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Sparkles, X, Send, Bot, User as UserIcon, Loader2, Minus, Maximize2, Mic, MicOff } from 'lucide-react';
+import { Sparkles, X, Send, Bot, User as UserIcon, Loader2, Minus, Maximize2, Mic, MicOff, AlertCircle } from 'lucide-react';
 import { streamChatResponse } from '../AIService';
 import { User, PropertyFile } from '../types';
 
@@ -15,7 +15,7 @@ const AIChatAssistant: React.FC<Props> = ({ currentUser, userFiles, allFiles = [
   const [isMinimized, setIsMinimized] = useState(false);
   const [input, setInput] = useState('');
   const [isListening, setIsListening] = useState(false);
-  const [messages, setMessages] = useState<{ role: 'user' | 'model', content: string }[]>([
+  const [messages, setMessages] = useState<{ role: 'user' | 'model', content: string, isError?: boolean }[]>([
     { 
       role: 'model', 
       content: currentUser.role === 'ADMIN' 
@@ -33,7 +33,6 @@ const AIChatAssistant: React.FC<Props> = ({ currentUser, userFiles, allFiles = [
     }
   }, [messages, isTyping]);
 
-  // Initialize Speech Recognition
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (SpeechRecognition) {
@@ -50,15 +49,9 @@ const AIChatAssistant: React.FC<Props> = ({ currentUser, userFiles, allFiles = [
         setInput(transcript);
       };
 
-      recognitionRef.current.onend = () => {
-        setIsListening(false);
-      };
-
+      recognitionRef.current.onend = () => setIsListening(false);
       recognitionRef.current.onerror = (event: any) => {
-        // Silently handle 'no-speech' error to prevent UI flickering or console errors
-        if (event.error !== 'no-speech') {
-          console.error('Speech recognition error:', event.error);
-        }
+        if (event.error !== 'no-speech') console.error('Speech error:', event.error);
         setIsListening(false);
       };
     }
@@ -78,9 +71,7 @@ const AIChatAssistant: React.FC<Props> = ({ currentUser, userFiles, allFiles = [
     e.preventDefault();
     if (!input.trim() || isTyping) return;
 
-    if (isListening) {
-      recognitionRef.current?.stop();
-    }
+    if (isListening) recognitionRef.current?.stop();
 
     const userMsg = input;
     setInput('');
@@ -102,8 +93,16 @@ const AIChatAssistant: React.FC<Props> = ({ currentUser, userFiles, allFiles = [
           return [...rest, { role: 'model', content: fullResponse }];
         });
       }
-    } catch (error) {
-      setMessages(prev => [...prev, { role: 'model', content: "SYSTEM ERROR: API Connection Timeout. Please verify your environment API key and network status." }]);
+    } catch (error: any) {
+      const isQuotaError = error.message === "QUOTA_EXCEEDED";
+      const errorMsg = isQuotaError 
+        ? "SYSTEM COOLING REQUIRED. \n\nAPI request quota has been exceeded for this minute. Please pause for 30-60 seconds to allow registry nodes to synchronize." 
+        : "TRANSMISSION INTERRUPTED. \n\nPlease verify network stability and environment configuration.";
+      
+      setMessages(prev => {
+        const rest = prev.slice(0, -1); // Remove the empty typing message
+        return [...rest, { role: 'model', content: errorMsg, isError: true }];
+      });
     } finally {
       setIsTyping(false);
     }
@@ -155,10 +154,10 @@ const AIChatAssistant: React.FC<Props> = ({ currentUser, userFiles, allFiles = [
               {messages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div className={`flex gap-3 max-w-[95%] ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                    <div className={`w-8 h-8 rounded-lg shrink-0 flex items-center justify-center ${msg.role === 'user' ? 'bg-slate-200' : (currentUser.role === 'ADMIN' ? 'bg-indigo-600' : 'bg-emerald-600') + ' text-white'}`}>
-                      {msg.role === 'user' ? <UserIcon size={14} /> : <Bot size={14} />}
+                    <div className={`w-8 h-8 rounded-lg shrink-0 flex items-center justify-center ${msg.role === 'user' ? 'bg-slate-200' : (msg.isError ? 'bg-rose-500' : (currentUser.role === 'ADMIN' ? 'bg-indigo-600' : 'bg-emerald-600')) + ' text-white'}`}>
+                      {msg.role === 'user' ? <UserIcon size={14} /> : (msg.isError ? <AlertCircle size={14} /> : <Bot size={14} />)}
                     </div>
-                    <div className={`p-4 rounded-2xl text-[11px] font-medium leading-relaxed shadow-sm chat-table-container ${msg.role === 'user' ? 'bg-slate-900 text-white rounded-tr-none' : 'bg-white text-slate-900 rounded-tl-none border border-slate-100'}`}>
+                    <div className={`p-4 rounded-2xl text-[11px] font-medium leading-relaxed shadow-sm chat-table-container ${msg.role === 'user' ? 'bg-slate-900 text-white rounded-tr-none' : (msg.isError ? 'bg-rose-50 text-rose-900 border-rose-100' : 'bg-white text-slate-900 border-slate-100') + ' border rounded-tl-none'}`}>
                       <div className="whitespace-pre-wrap font-mono prose prose-slate max-w-none prose-xs overflow-x-auto">
                         {msg.content || (isTyping && i === messages.length - 1 ? "..." : "")}
                       </div>
